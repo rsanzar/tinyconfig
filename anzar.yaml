@@ -1,0 +1,55 @@
+apps:
+  tiny-kernel:
+    ci:
+      jobs:
+        - name: build-tiny-kernel
+          runtime: kernel-builder-latest
+          tshirt: large
+          commands:
+            # 1. Download official Linux LTS source and unpack
+            - wget https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-6.6.tar.xz
+            - tar -xf linux-6.6.tar.xz
+            - cd linux-6.6
+            
+            # 2. Generate minimalist base config
+            - make tinyconfig
+            
+            # 3. Inject Firecracker specific modules required to boot and mount rootfs
+            - |
+              echo "CONFIG_BINFMT_ELF=y" >> .config
+              echo "CONFIG_BINFMT_SCRIPT=y" >> .config
+              echo "CONFIG_KVM_GUEST=y" >> .config
+              echo "CONFIG_VIRTIO_MMIO=y" >> .config
+              echo "CONFIG_VIRTIO_MMIO_CMDLINE_DEVICES=y" >> .config
+              echo "CONFIG_VIRTIO_BLK=y" >> .config
+              echo "CONFIG_VIRTIO_NET=y" >> .config
+              echo "CONFIG_SERIAL_8250=y" >> .config
+              echo "CONFIG_SERIAL_8250_CONSOLE=y" >> .config
+              echo "CONFIG_EXT4_FS=y" >> .config
+              echo "CONFIG_NET=y" >> .config
+              echo "CONFIG_INET=y" >> .config
+              echo "CONFIG_UNIX=y" >> .config
+              echo "CONFIG_TMPFS=y" >> .config
+              
+            # 4. Safely resolve dependencies of the newly injected configs
+            - make olddefconfig
+            
+            # 5. Compile uncompressed vmlinux binary
+            - make vmlinux -j$(nproc)
+            
+            # 6. Expose the compiled kernel to the app volume for CD to serve
+            - mkdir -p /app/public
+            - cp vmlinux /app/public/vmlinux
+
+    cd:
+      runtime: nginx-latest
+      tshirt: standard
+      type: warm
+      start_commands:
+        # 1. Configure nginx to serve the /app/public directory with directory listing enabled
+        - echo -e 'server {\n listen 80;\n location / {\n root /app/public;\n autoindex on;\n }\n }' > /etc/nginx/http.d/default.conf || echo -e 'server {\n listen 80;\n location / {\n root /app/public;\n autoindex on;\n }\n }' > /etc/nginx/conf.d/default.conf
+        
+        # 2. Start Nginx
+        - nginx -g "daemon off;"
+      port: 80
+      connection_limit: 1000
