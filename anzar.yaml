@@ -6,16 +6,15 @@ apps:
           runtime: kernel-builder-latest
           tshirt: large
           commands:
-            # 1. Download official Linux LTS source and unpack
+            # 1. Download official Linux LTS source
             - wget https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-6.6.tar.xz
             - tar -xf linux-6.6.tar.xz
-            - cd linux-6.6
             
-            # 2. Generate minimalist base config
-            - make tinyconfig
-            
-            # 3. Inject Firecracker specific modules required to boot and mount rootfs
+            # 2. Execute all kernel compilation steps inside the same shell session
             - |
+              cd linux-6.6
+              make tinyconfig
+              
               echo "CONFIG_BINFMT_ELF=y" >> .config
               echo "CONFIG_BINFMT_SCRIPT=y" >> .config
               echo "CONFIG_KVM_GUEST=y" >> .config
@@ -31,15 +30,11 @@ apps:
               echo "CONFIG_UNIX=y" >> .config
               echo "CONFIG_TMPFS=y" >> .config
               
-            # 4. Safely resolve dependencies of the newly injected configs
-            - make olddefconfig
-            
-            # 5. Compile uncompressed vmlinux binary
-            - make vmlinux -j$(nproc)
-            
-            # 6. Expose the compiled kernel to the app volume for CD to serve
-            - mkdir -p /app/public
-            - cp vmlinux /app/public/vmlinux
+              make olddefconfig
+              make vmlinux -j$(nproc)
+              
+              mkdir -p /app/public
+              cp vmlinux /app/public/vmlinux
 
     cd:
       runtime: nginx-latest
