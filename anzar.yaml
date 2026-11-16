@@ -6,32 +6,41 @@ apps:
           runtime: kernel-builder-latest
           tshirt: large
           commands:
-            # 1. Download official Linux LTS source
-            - wget https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-6.6.tar.xz
-            - tar -xf linux-6.6.tar.xz
+            - wget https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-6.VERSION.tar.xz
+            - tar -xf linux-6.VERSION.tar.xz
             
-            # 2. Execute all kernel compilation steps inside the same shell session
             - |
-              cd linux-6.6
-              make tinyconfig
+              cd linux-6.VERSION
               
+              # Force 64-bit architecture during tinyconfig generation
+              make ARCH=x86_64 tinyconfig
+              
+              # Ensure 64-bit is locked in alongside core Firecracker requirements
+              echo "CONFIG_64BIT=y" >> .config
               echo "CONFIG_BINFMT_ELF=y" >> .config
               echo "CONFIG_BINFMT_SCRIPT=y" >> .config
               echo "CONFIG_KVM_GUEST=y" >> .config
               echo "CONFIG_VIRTIO_MMIO=y" >> .config
               echo "CONFIG_VIRTIO_MMIO_CMDLINE_DEVICES=y" >> .config
+              
+              # Disks & Console
               echo "CONFIG_VIRTIO_BLK=y" >> .config
-              echo "CONFIG_VIRTIO_NET=y" >> .config
               echo "CONFIG_SERIAL_8250=y" >> .config
               echo "CONFIG_SERIAL_8250_CONSOLE=y" >> .config
               echo "CONFIG_EXT4_FS=y" >> .config
+              
+              # Networking & VSOCK (Required for Host-VM UDS communication)
               echo "CONFIG_NET=y" >> .config
               echo "CONFIG_INET=y" >> .config
               echo "CONFIG_UNIX=y" >> .config
-              echo "CONFIG_TMPFS=y" >> .config
+              echo "CONFIG_VSOCKETS=y" >> .config
+              echo "CONFIG_VIRTIO_VSOCKETS=y" >> .config
               
-              make olddefconfig
-              make vmlinux -j$(nproc)
+              # Resolve dependencies using the 64-bit architecture flag
+              make ARCH=x86_64 olddefconfig
+              
+              # Compile 64-bit uncompressed vmlinux binary
+              make ARCH=x86_64 vmlinux -j$(nproc)
               
               mkdir -p /app/public
               cp vmlinux /app/public/vmlinux
