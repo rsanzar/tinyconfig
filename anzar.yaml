@@ -6,48 +6,39 @@ apps:
           runtime: kernel-builder-latest
           tshirt: large
           commands:
+            # 1. Download official Linux 6.6 LTS source
             - wget https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-6.6.tar.xz
             - tar -xf linux-6.6.tar.xz
+            
+            # 2. Download Firecracker's official MicroVM CI config
+            - wget https://raw.githubusercontent.com/firecracker-microvm/firecracker/main/resources/guest_configs/microvm-kernel-ci-x86_64-6.1.config -O firecracker.config
+            
             - |
               cd linux-6.6
-              make ARCH=x86_64 tinyconfig
               
-              # Use the kernel's config script to safely enforce flags without silent drops
+              # Apply the official Firecracker config instead of tinyconfig
+              cp ../firecracker.config .config
               
-              # 1. Force 64-bit architecture
-              ./scripts/config -e 64BIT
+              # CRITICAL Mainline Fix: Firecracker's config expects an Amazon Linux source tree.
+              # Mainline Linux 6.6 requires PCI enabled for VirtIO block routing to work on Firecracker.
+              ./scripts/config -e PCI -e VIRTIO_PCI
               
-              # 2. Fix the 8MB Size Bloat (Force-disable all debug symbols & BTF metadata)
-              ./scripts/config -d DEBUG_INFO -d DEBUG_INFO_BTF -d DEBUG_INFO_DWARF4 -d DEBUG_INFO_DWARF5
-              ./scripts/config -e DEBUG_INFO_NONE
-              
-              # 3. Core Firecracker
-              ./scripts/config -e BINFMT_ELF -e BINFMT_SCRIPT -e KVM_GUEST -e MISC_DEVICES
-              
-              # 4. VirtIO (Disks, Networking, VSOCK)
-              ./scripts/config -e VIRTIO_MMIO -e VIRTIO_MMIO_CMDLINE_DEVICES -e VIRTIO_PCI -e PCI
-              ./scripts/config -e VIRTIO_BLK -e EXT4_FS
+              # Ensure UDS / VSOCK is fully enabled for anzar-init to talk to Shiroe
               ./scripts/config -e NET -e INET -e UNIX -e VSOCKETS -e VIRTIO_VSOCKETS
               
-              # 5. CRITICAL for Rust/Tokio Init Binary (anzar-init panics without these!)
-              ./scripts/config -e EPOLL -e EVENTFD -e TIMERFD -e SIGNALFD -e FUTEX -e ANON_INODES
+              # Force-disable debug metadata to ensure the final binary stays under 5MB
+              ./scripts/config -d DEBUG_INFO -d DEBUG_INFO_BTF -e DEBUG_INFO_NONE
               
-              # 6. CRITICAL for Init Mounts (/proc, /sys, /tmp, /dev, /dev/pts)
-              ./scripts/config -e PROC_FS -e SYSFS -e DEVTMPFS -e DEVTMPFS_MOUNT
-              ./scripts/config -e TMPFS -e SHMEM -e DEVPTS_FS -e UNIX98_PTYS
-              
-              # 7. Console for debugging
-              ./scripts/config -e SERIAL_8250 -e SERIAL_8250_CONSOLE
-              
-              # Resolve dependencies based on the above selections
+              # Automatically adapt the 6.1 Firecracker config to the 6.6 source tree safely
               make ARCH=x86_64 olddefconfig
               
               # Compile the uncompressed ELF binary
               make ARCH=x86_64 vmlinux -j$(nproc)
               
-              # Final strip pass using the native toolchain
+              # Strip all remaining metadata
               strip --strip-all vmlinux || true
               
+              # Expose for CD
               mkdir -p /app/public
               cp vmlinux /app/public/vmlinux
 
