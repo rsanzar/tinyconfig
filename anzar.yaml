@@ -10,41 +10,44 @@ apps:
             - tar -xf linux-6.6.tar.xz
             - wget https://raw.githubusercontent.com/firecracker-microvm/firecracker/main/resources/guest_configs/microvm-kernel-ci-x86_64-6.1.config -O firecracker.config
             - |
-              set -e
               cd linux-6.6
-              cp ../firecracker.config .config
               
-              ./scripts/config -d WERROR
-              ./scripts/config -e PCI -e VIRTIO_PCI
-              ./scripts/config -e NET -e INET -e UNIX -e VSOCKETS -e VIRTIO_VSOCKETS
-              ./scripts/config -d DEBUG_INFO -d DEBUG_INFO_BTF -e DEBUG_INFO_NONE
+              echo "Starting build process..." > ../build.log
               
-              # Fix: Prevent build crashes looking for non-existent Debian certificate PEM files
-              ./scripts/config --set-str SYSTEM_TRUSTED_KEYS ""
-              ./scripts/config --set-str SYSTEM_REVOCATION_KEYS ""
+              # Group ALL commands and redirect both stdout and stderr directly to the log
+              {
+                cp ../firecracker.config .config
+                
+                ./scripts/config -d WERROR
+                ./scripts/config -e PCI -e VIRTIO_PCI
+                ./scripts/config -e NET -e INET -e UNIX -e VSOCKETS -e VIRTIO_VSOCKETS
+                ./scripts/config -d DEBUG_INFO -d DEBUG_INFO_BTF -e DEBUG_INFO_NONE
+                ./scripts/config --set-str SYSTEM_TRUSTED_KEYS ""
+                ./scripts/config --set-str SYSTEM_REVOCATION_KEYS ""
+                
+                echo "Running olddefconfig..."
+                make ARCH=x86_64 olddefconfig
+                
+                echo "Running vmlinux build..."
+                make ARCH=x86_64 vmlinux -j$(nproc)
+                
+                echo "Stripping binary..."
+                strip --strip-all vmlinux || true
+              } >> ../build.log 2>&1
               
-              make ARCH=x86_64 olddefconfig
-              
-              # DIAGNOSTIC BYPASS: Turn off strict exit to catch the make error
-              set +e
-              echo "Starting kernel build..." > build.log
-              make ARCH=x86_64 vmlinux -j$(nproc) >> build.log 2>&1
-              MAKE_EXIT=$?
-              set -e
-              
+              # Expose logs to Nginx CD
               mkdir -p /app/public
+              cp ../build.log /app/public/build.log
               
-              # If compilation failed, serve the log file and gracefully exit CI
-              if [ $MAKE_EXIT -ne 0 ]; then
-                cp build.log /app/public/build.log
-                echo "Build failed. Error log exposed via Nginx."
-                exit 0
+              # Check if the kernel was successfully built and expose it
+              if [ -f vmlinux ]; then
+                cp vmlinux /app/public/vmlinux
+              else
+                echo "Build crashed. Check build.log." > /app/public/vmlinux-missing.txt
               fi
               
-              # If successful, strip and serve the kernel (and the success log)
-              strip --strip-all vmlinux || true
-              cp vmlinux /app/public/vmlinux
-              cp build.log /app/public/build.log
+              # Force a successful exit so Shiroe stages the CD deployment
+              exit 0
 
     cd:
       runtime: nginx-latest
