@@ -6,39 +6,31 @@ apps:
           runtime: kernel-builder-latest
           tshirt: large
           commands:
-            # 1. Download official Linux 6.6 LTS source
             - wget https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-6.6.tar.xz
             - tar -xf linux-6.6.tar.xz
-            
-            # 2. Download Firecracker's official MicroVM CI config
             - wget https://raw.githubusercontent.com/firecracker-microvm/firecracker/main/resources/guest_configs/microvm-kernel-ci-x86_64-6.1.config -O firecracker.config
-            
             - |
-              cd linux-6.6
+              # Force strict execution: exit immediately if ANY command fails
+              set -e
               
-              # Apply the official Firecracker config instead of tinyconfig
+              cd linux-6.6
               cp ../firecracker.config .config
               
-              # CRITICAL Mainline Fix: Firecracker's config expects an Amazon Linux source tree.
-              # Mainline Linux 6.6 requires PCI enabled for VirtIO block routing to work on Firecracker.
-              ./scripts/config -e PCI -e VIRTIO_PCI
+              # CRITICAL: Prevent Alpine's GCC warnings from fatally halting the build
+              ./scripts/config -d WERROR
               
-              # Ensure UDS / VSOCK is fully enabled for anzar-init to talk to Shiroe
+              # Mainline PCI, Network, and VSOCK requirements
+              ./scripts/config -e PCI -e VIRTIO_PCI
               ./scripts/config -e NET -e INET -e UNIX -e VSOCKETS -e VIRTIO_VSOCKETS
               
-              # Force-disable debug metadata to ensure the final binary stays under 5MB
+              # Strip debug metadata for <5MB footprint
               ./scripts/config -d DEBUG_INFO -d DEBUG_INFO_BTF -e DEBUG_INFO_NONE
               
-              # Automatically adapt the 6.1 Firecracker config to the 6.6 source tree safely
               make ARCH=x86_64 olddefconfig
-              
-              # Compile the uncompressed ELF binary
               make ARCH=x86_64 vmlinux -j$(nproc)
               
-              # Strip all remaining metadata
               strip --strip-all vmlinux || true
               
-              # Expose for CD
               mkdir -p /app/public
               cp vmlinux /app/public/vmlinux
 
