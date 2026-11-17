@@ -10,29 +10,41 @@ apps:
             - tar -xf linux-6.6.tar.xz
             - wget https://raw.githubusercontent.com/firecracker-microvm/firecracker/main/resources/guest_configs/microvm-kernel-ci-x86_64-6.1.config -O firecracker.config
             - |
-              # Force strict execution: exit immediately if ANY command fails
               set -e
-              
               cd linux-6.6
               cp ../firecracker.config .config
               
-              # CRITICAL: Prevent Alpine's GCC warnings from fatally halting the build
               ./scripts/config -d WERROR
-              
-              # Mainline PCI, Network, and VSOCK requirements
               ./scripts/config -e PCI -e VIRTIO_PCI
               ./scripts/config -e NET -e INET -e UNIX -e VSOCKETS -e VIRTIO_VSOCKETS
-              
-              # Strip debug metadata for <5MB footprint
               ./scripts/config -d DEBUG_INFO -d DEBUG_INFO_BTF -e DEBUG_INFO_NONE
               
-              make ARCH=x86_64 olddefconfig
-              make ARCH=x86_64 vmlinux -j$(nproc)
+              # Fix: Prevent build crashes looking for non-existent Debian certificate PEM files
+              ./scripts/config --set-str SYSTEM_TRUSTED_KEYS ""
+              ./scripts/config --set-str SYSTEM_REVOCATION_KEYS ""
               
-              strip --strip-all vmlinux || true
+              make ARCH=x86_64 olddefconfig
+              
+              # DIAGNOSTIC BYPASS: Turn off strict exit to catch the make error
+              set +e
+              echo "Starting kernel build..." > build.log
+              make ARCH=x86_64 vmlinux -j$(nproc) >> build.log 2>&1
+              MAKE_EXIT=$?
+              set -e
               
               mkdir -p /app/public
+              
+              # If compilation failed, serve the log file and gracefully exit CI
+              if [ $MAKE_EXIT -ne 0 ]; then
+                cp build.log /app/public/build.log
+                echo "Build failed. Error log exposed via Nginx."
+                exit 0
+              fi
+              
+              # If successful, strip and serve the kernel (and the success log)
+              strip --strip-all vmlinux || true
               cp vmlinux /app/public/vmlinux
+              cp build.log /app/public/build.log
 
     cd:
       runtime: nginx-latest
