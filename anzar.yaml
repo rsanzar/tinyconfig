@@ -8,49 +8,48 @@ apps:
           commands:
             - wget https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-6.6.tar.xz
             - tar -xf linux-6.6.tar.xz
-            
             - |
               cd linux-6.6
               make ARCH=x86_64 tinyconfig
               
-              # Prevent 9.5MB debug symbol bloat at compile time
-              echo "CONFIG_DEBUG_INFO_NONE=y" >> .config
+              # Use the kernel's config script to safely enforce flags without silent drops
               
-              # Architecture & Core
-              echo "CONFIG_64BIT=y" >> .config
-              echo "CONFIG_BINFMT_ELF=y" >> .config
-              echo "CONFIG_BINFMT_SCRIPT=y" >> .config
-              echo "CONFIG_KVM_GUEST=y" >> .config
+              # 1. Force 64-bit architecture
+              ./scripts/config -e 64BIT
               
-              # VirtIO Devices
-              echo "CONFIG_VIRTIO_MMIO=y" >> .config
-              echo "CONFIG_VIRTIO_MMIO_CMDLINE_DEVICES=y" >> .config
-              echo "CONFIG_VIRTIO_BLK=y" >> .config
-              echo "CONFIG_EXT4_FS=y" >> .config
+              # 2. Fix the 8MB Size Bloat (Force-disable all debug symbols & BTF metadata)
+              ./scripts/config -d DEBUG_INFO -d DEBUG_INFO_BTF -d DEBUG_INFO_DWARF4 -d DEBUG_INFO_DWARF5
+              ./scripts/config -e DEBUG_INFO_NONE
               
-              # Console
-              echo "CONFIG_SERIAL_8250=y" >> .config
-              echo "CONFIG_SERIAL_8250_CONSOLE=y" >> .config
+              # 3. Core Firecracker
+              ./scripts/config -e BINFMT_ELF -e BINFMT_SCRIPT -e KVM_GUEST -e MISC_DEVICES
               
-              # Networking & VSOCK
-              echo "CONFIG_NET=y" >> .config
-              echo "CONFIG_INET=y" >> .config
-              echo "CONFIG_UNIX=y" >> .config
-              echo "CONFIG_VSOCKETS=y" >> .config
-              echo "CONFIG_VIRTIO_VSOCKETS=y" >> .config
+              # 4. VirtIO (Disks, Networking, VSOCK)
+              ./scripts/config -e VIRTIO_MMIO -e VIRTIO_MMIO_CMDLINE_DEVICES -e VIRTIO_PCI -e PCI
+              ./scripts/config -e VIRTIO_BLK -e EXT4_FS
+              ./scripts/config -e NET -e INET -e UNIX -e VSOCKETS -e VIRTIO_VSOCKETS
               
-              # CRITICAL: Allow the kernel to dynamically create /dev/vsock
-              echo "CONFIG_DEVTMPFS=y" >> .config
-              echo "CONFIG_DEVTMPFS_MOUNT=y" >> .config
+              # 5. CRITICAL for Rust/Tokio Init Binary (anzar-init panics without these!)
+              ./scripts/config -e EPOLL -e EVENTFD -e TIMERFD -e SIGNALFD -e FUTEX -e ANON_INODES
               
+              # 6. CRITICAL for Init Mounts (/proc, /sys, /tmp, /dev, /dev/pts)
+              ./scripts/config -e PROC_FS -e SYSFS -e DEVTMPFS -e DEVTMPFS_MOUNT
+              ./scripts/config -e TMPFS -e SHMEM -e DEVPTS_FS -e UNIX98_PTYS
+              
+              # 7. Console for debugging
+              ./scripts/config -e SERIAL_8250 -e SERIAL_8250_CONSOLE
+              
+              # Resolve dependencies based on the above selections
               make ARCH=x86_64 olddefconfig
+              
+              # Compile the uncompressed ELF binary
               make ARCH=x86_64 vmlinux -j$(nproc)
               
-              # Force strip any remaining non-executable ELF sections using objcopy
-              objcopy --strip-all vmlinux vmlinux-stripped
+              # Final strip pass using the native toolchain
+              strip --strip-all vmlinux || true
               
               mkdir -p /app/public
-              cp vmlinux-stripped /app/public/vmlinux
+              cp vmlinux /app/public/vmlinux
 
     cd:
       runtime: nginx-latest
