@@ -7,17 +7,21 @@ apps:
           tshirt: large
           commands:
             - wget https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-6.6.tar.xz
-            - tar -xf linux-6.6.tar.xz
             - wget https://raw.githubusercontent.com/firecracker-microvm/firecracker/main/resources/guest_configs/microvm-kernel-ci-x86_64-6.1.config -O firecracker.config
+            
+            # THE FIX: Destroy the dirty directory from previous persistent runs or git checkouts
+            - rm -rf linux-6.6
+            - tar -xf linux-6.6.tar.xz
+            
             - |
               cd linux-6.6
-              
               echo "Starting build process..." > ../build.log
               
-              # Group ALL commands and redirect both stdout and stderr directly to the log
               {
-                cp ../firecracker.config .config
+                # Double-ensure a clean kernel tree before patching configs
+                make mrproper
                 
+                cp ../firecracker.config .config
                 ./scripts/config -d WERROR
                 ./scripts/config -e PCI -e VIRTIO_PCI
                 ./scripts/config -e NET -e INET -e UNIX -e VSOCKETS -e VIRTIO_VSOCKETS
@@ -35,18 +39,15 @@ apps:
                 strip --strip-all vmlinux || true
               } >> ../build.log 2>&1
               
-              # Expose logs to Nginx CD
               mkdir -p /app/public
               cp ../build.log /app/public/build.log
               
-              # Check if the kernel was successfully built and expose it
               if [ -f vmlinux ]; then
                 cp vmlinux /app/public/vmlinux
               else
                 echo "Build crashed. Check build.log." > /app/public/vmlinux-missing.txt
               fi
               
-              # Force a successful exit so Shiroe stages the CD deployment
               exit 0
 
     cd:
