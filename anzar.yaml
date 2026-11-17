@@ -6,50 +6,51 @@ apps:
           runtime: kernel-builder-latest
           tshirt: large
           commands:
-            # 1. Download official Linux 6.6 LTS source
             - wget https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-6.6.tar.xz
             - tar -xf linux-6.6.tar.xz
             
-            # 2. Execute all kernel compilation steps inside the same shell session
             - |
               cd linux-6.6
-              
-              # Force 64-bit architecture during tinyconfig generation
               make ARCH=x86_64 tinyconfig
               
-              # Ensure 64-bit is locked in alongside core Firecracker requirements
+              # Prevent 9.5MB debug symbol bloat at compile time
+              echo "CONFIG_DEBUG_INFO_NONE=y" >> .config
+              
+              # Architecture & Core
               echo "CONFIG_64BIT=y" >> .config
               echo "CONFIG_BINFMT_ELF=y" >> .config
               echo "CONFIG_BINFMT_SCRIPT=y" >> .config
               echo "CONFIG_KVM_GUEST=y" >> .config
+              
+              # VirtIO Devices
               echo "CONFIG_VIRTIO_MMIO=y" >> .config
               echo "CONFIG_VIRTIO_MMIO_CMDLINE_DEVICES=y" >> .config
-              
-              # Disks & Console
               echo "CONFIG_VIRTIO_BLK=y" >> .config
-              echo "CONFIG_SERIAL_8250=y" >> .config
-              echo "CONFIG_SERIAL_8250_CONSOLE=y" >> .config
               echo "CONFIG_EXT4_FS=y" >> .config
               
-              # Networking & VSOCK (Required for Host-VM UDS communication)
+              # Console
+              echo "CONFIG_SERIAL_8250=y" >> .config
+              echo "CONFIG_SERIAL_8250_CONSOLE=y" >> .config
+              
+              # Networking & VSOCK
               echo "CONFIG_NET=y" >> .config
               echo "CONFIG_INET=y" >> .config
               echo "CONFIG_UNIX=y" >> .config
               echo "CONFIG_VSOCKETS=y" >> .config
               echo "CONFIG_VIRTIO_VSOCKETS=y" >> .config
               
-              # Resolve dependencies using the 64-bit architecture flag
-              make ARCH=x86_64 olddefconfig
+              # CRITICAL: Allow the kernel to dynamically create /dev/vsock
+              echo "CONFIG_DEVTMPFS=y" >> .config
+              echo "CONFIG_DEVTMPFS_MOUNT=y" >> .config
               
-              # Compile 64-bit uncompressed vmlinux binary
+              make ARCH=x86_64 olddefconfig
               make ARCH=x86_64 vmlinux -j$(nproc)
               
-              # Strip all symbol tables and debug metadata to compress file size back down
-              strip --strip-all vmlinux
+              # Force strip any remaining non-executable ELF sections using objcopy
+              objcopy --strip-all vmlinux vmlinux-stripped
               
-              # Expose the stripped binary to the app volume for CD to serve
               mkdir -p /app/public
-              cp vmlinux /app/public/vmlinux
+              cp vmlinux-stripped /app/public/vmlinux
 
     cd:
       runtime: nginx-latest
